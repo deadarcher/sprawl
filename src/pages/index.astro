@@ -1,0 +1,544 @@
+---
+import Layout from '../layouts/Layout.astro';
+import '../styles/tools.css';
+
+const title = 'Sprawl - Free SCCM & Intune Software Version Sprawl Analyzer';
+const description =
+  'Export the software inventory you already have from Intune, SCCM / MECM / Configuration Manager or your RMM, ' +
+  'drop the CSV here, and see how many concurrent versions of each application are on your fleet - ' +
+  'plus what is past end-of-support. Nothing is uploaded; it runs entirely in your browser.';
+
+const faq = [
+  ['What is software sprawl?',
+   'The same application running at many different versions across your fleet at the same time. Seven Java 8 update levels, four Citrix Workspace majors, three Notepad++ builds. Each version is a separate thing to test, patch and support, and most teams cannot say how many they have until they count.'],
+  ['How do I export software inventory from Intune?',
+   'In Intune go to Apps, then Monitor, then Discovered apps, and use Export. You get a CSV with the application name, version and how many devices have it. Drop that file here.'],
+  ['How do I export software inventory from SCCM, MECM or Configuration Manager?',
+   'It is the same product under three names - SCCM, MECM, and Configuration Manager. In any of them, run the "All Software Details" or "Installed software on a specific computer" report and export it to CSV, or query v_GS_INSTALLED_SOFTWARE / v_Add_Remove_Programs directly. Any export with an application name column works.'],
+  ['Is my inventory uploaded anywhere?',
+   'No. The file is read and analysed entirely in your browser using JavaScript. Nothing is uploaded, stored, or sent to us, and there is no account. You can verify it: open your browser developer tools and watch the network tab, or disconnect from the network before dropping the file - it still works.'],
+  ['Why are Visual C++ redistributables not counted as sprawl?',
+   'Because many concurrent versions of them are correct. Side-by-side runtimes are designed to coexist - applications bind to a specific major version - so one machine legitimately carries six of them. Counting those would bury the signal under the only rows nobody can act on. The same goes for .NET runtimes, MUI language packs, driver packages and Office shared components.'],
+  ['Where do the end-of-life dates come from?',
+   'Published vendor end-of-support dates, curated by hand. Where a date is genuinely unclear it is left out rather than guessed, because a false "this is end of life" costs you a pointless migration project.'],
+  ['Does this work with RMM exports?',
+   'Yes. Any CSV with a column for the application name works - NinjaOne, Action1, PDQ, Lansweeper, Tanium, or a PowerShell export of Win32_Product. If the columns are not recognised automatically you can map them by hand.'],
+];
+
+const siteUrl = 'https://getrff.com/';
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebApplication',
+    name: 'Sprawl',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'Any (browser)',
+    description,
+    url: siteUrl + 'sprawl/',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faq.map(([q, a]) => ({
+      '@type': 'Question', name: q,
+      acceptedAnswer: { '@type': 'Answer', text: a },
+    })),
+  },
+];
+---
+
+<Layout title={title} description={description} jsonLd={jsonLd}>
+  <header class="tool-nav">
+    <a href="/" class="tool-nav-home">Sprawl</a>
+    <a href="https://getrff.com/tools/" class="tool-nav-by">More free tools →</a>
+  </header>
+
+  <main class="tools-wrap">
+    <div class="tool-hero">
+      <h1>Sprawl</h1>
+      <p class="sub">
+        <strong>How many versions of everything are you actually running?</strong> Export the software
+        inventory you already have - Intune, SCCM, or your RMM - and drop the CSV here.
+        You get every application that exists at more than one version on your fleet, worst first, plus
+        anything the vendor stopped patching.
+      </p>
+      <span class="privacy-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Runs entirely in your browser. Nothing is uploaded, stored, or sent to us.
+      </span>
+    </div>
+
+    <section class="panel">
+      <h2><span class="step-n">1</span>Get your export</h2>
+      <p>Any CSV with an application-name column works. Pick where your inventory lives:</p>
+      <div class="seg" id="src-seg"></div>
+      <p class="builder-hint" id="src-note" style="margin-top:12px"></p>
+      <div class="script-actions">
+        <button class="btn" id="copy-ps">Copy command</button>
+      </div>
+      <pre class="script"><code id="ps-script"></code></pre>
+    </section>
+
+    <section class="panel">
+      <h2><span class="step-n">2</span>Drop the CSV here</h2>
+      <label class="drop" id="drop" for="file" tabindex="0">
+        <input id="file" type="file" hidden accept=".csv,text/csv,.txt" />
+        <p id="drop-msg">Drop the file here, or click to choose</p>
+      </label>
+      <textarea class="paste" id="paste" spellcheck="false" placeholder="Or paste the CSV contents here, including the header row."></textarea>
+      <div id="read-error" class="read-error hidden"></div>
+      <div id="map-wrap" class="hidden">
+        <p class="parse-error">Could not work out which column holds the application name. Pick it by hand:</p>
+        <label class="field-label">Application name</label><select id="map-name"></select>
+        <label class="field-label">Version (optional)</label><select id="map-version"></select>
+        <label class="field-label">Device name (optional)</label><select id="map-device"></select>
+        <button class="btn" id="map-go" style="margin-top:12px">Analyse</button>
+      </div>
+    </section>
+
+    <div id="report"></div>
+
+    <section class="panel">
+      <h2>What this is</h2>
+      <p>
+        This is the software report from <a href="https://getrff.com">RFF</a>, run on your own export instead of on data
+        we collect. Same normalization, same suppression rules, same curated end-of-support list. If you
+        want it to run continuously against your fleet rather than against a CSV you exported by hand,
+        that is the product.
+      </p>
+      <p>
+        It is open source, like the rest of the free tools:
+        <a href="https://github.com/deadarcher/sprawl" target="_blank" rel="noopener">github.com/deadarcher/sprawl</a>.
+        Read the analysis, disagree with a rule, or add an end-of-life fact.
+        <a href="https://github.com/deadarcher/sprawl/issues" target="_blank" rel="noopener">Open an issue</a>
+        if a vendor's naming defeats the family matcher — that is the part that always needs real-world data.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>Questions</h2>
+      {faq.map(([q, a]) => (
+        <details class="faq"><summary>{q}</summary><p>{a}</p></details>
+      ))}
+    </section>
+  </main>
+</Layout>
+
+<script>
+  import { parseCsv, detectColumns, analyze } from '../lib/sprawlAnalyzer'
+  import type { ColumnMap, SprawlReport } from '../lib/sprawlAnalyzer'
+
+  const $ = (id: string) => document.getElementById(id)!
+  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+
+  /**
+   * One tailored command per source. "Go to Apps, then Monitor" is documentation, not a tool - the
+   * point of this page is that you leave with something you can paste.
+   *
+   * Every one of these READS. None of them changes anything, and none of them needs the file to
+   * leave your machine.
+   */
+  const SOURCES: Record<string, { label: string; note: string; script: string }> = {
+    intune: {
+      label: 'Intune',
+      note: 'Reads the Discovered apps list through Graph. Needs the Microsoft.Graph.DeviceManagement module and consent for DeviceManagementManagedDevices.Read.All. Already aggregated, so you get a device count per version rather than a row per machine.',
+      script: String.raw`# Intune -> CSV. Read-only; needs Microsoft.Graph.DeviceManagement.
+# Install-Module Microsoft.Graph.DeviceManagement -Scope CurrentUser
+Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All'
+
+Get-MgDeviceManagementDetectedApp -All |
+  Select-Object @{n='ApplicationName';e={$_.DisplayName}},
+                @{n='ApplicationVersion';e={$_.Version}},
+                @{n='DeviceCount';e={$_.DeviceCount}} |
+  Sort-Object ApplicationName, ApplicationVersion |
+  Export-Csv "$env:USERPROFILE\Desktop\intune-discovered-apps.csv" -NoTypeInformation`,
+    },
+    sccm: {
+      label: 'SCCM / MECM',
+      note: 'Queries the site database directly, which is faster and more complete than exporting a report. Replace the server and CM_XXX database name with yours. Needs db_datareader on the site database and the SqlServer module. The two ISNULL filters are the important part: without them you count obsolete duplicate records and discovery-only rows for machines that never had a client, which inflates every device number in the report.',
+      script: String.raw`# SCCM / MECM / Configuration Manager -> CSV. Read-only SELECT.
+# Install-Module SqlServer -Scope CurrentUser
+$Server   = 'SCCM-DB.contoso.com'    # site database server
+$Database = 'CM_ABC'                 # your site code
+
+# v_Add_Remove_Programs already covers both 32- and 64-bit entries, so no union is needed.
+#
+# The two ISNULL filters matter more than they look. ConfigMgr accumulates OBSOLETE duplicate
+# resource records (reimaged machines, renamed machines), and it also holds discovery-only rows for
+# devices that never had a client installed. Counting either one inflates the device numbers in a
+# report whose entire job is counting.
+$Query = @'
+SELECT DISTINCT
+       sys.Netbios_Name0 AS DeviceName,
+       arp.DisplayName0  AS ApplicationName,
+       arp.Version0      AS Version
+FROM   v_Add_Remove_Programs arp
+JOIN   v_R_System sys ON sys.ResourceID = arp.ResourceID
+WHERE  arp.DisplayName0 IS NOT NULL
+  AND  ISNULL(sys.Obsolete0, 0) = 0
+  AND  ISNULL(sys.Client0, 0) = 1
+ORDER BY DeviceName, ApplicationName;
+'@
+
+Invoke-Sqlcmd -ServerInstance $Server -Database $Database -Query $Query |
+  Export-Csv "$env:USERPROFILE\Desktop\sccm-software.csv" -NoTypeInformation`,
+    },
+    rmm: {
+      label: 'An RMM',
+      note: 'NinjaOne, Action1, PDQ, Lansweeper, Tanium and the rest all have a software or applications view with an export button. Any CSV with an application-name column works - map the columns by hand if the layout is not recognised.',
+      script: String.raw`# Most RMMs export from the UI. If yours has an API, you only need three fields:
+#
+#   DeviceName , ApplicationName , Version
+#
+# Example shape (Action1, NinjaOne, PDQ all export something close to this):
+#
+#   DeviceName,ApplicationName,Version
+#   WKS-0001,Google Chrome,151.0.7922.138
+#   WKS-0001,7-Zip 24.09 (x64 edition),24.09
+#   WKS-0002,Java 8 Update 451 (64-bit),8.0.4510.8
+#
+# A device column is optional. Without it you still get version sprawl,
+# just no per-machine breakdown.`,
+    },
+    local: {
+      label: 'No inventory system',
+      note: 'Run this on a handful of machines and concatenate the CSVs. Reads the uninstall registry rather than Win32_Product, because querying that WMI class triggers an MSI reconfigure of every installed product - it is slow and has genuinely broken installs.',
+      script: String.raw`# Local machine -> CSV. Registry, NOT Win32_Product (that class reconfigures every MSI).
+$paths = @(
+  'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+Get-ItemProperty $paths -ErrorAction SilentlyContinue |
+  Where-Object { $_.DisplayName } |
+  Select-Object @{n='DeviceName';e={$env:COMPUTERNAME}},
+                @{n='ApplicationName';e={$_.DisplayName}},
+                @{n='Version';e={$_.DisplayVersion}} |
+  Sort-Object ApplicationName |
+  Export-Csv "$env:USERPROFILE\Desktop\software-inventory.csv" -NoTypeInformation`,
+    },
+  }
+
+  let currentSource = 'intune'
+  const renderSource = () => {
+    const s = SOURCES[currentSource]
+    ;($('ps-script') as HTMLElement).textContent = s.script
+    ;($('src-note') as HTMLElement).textContent = s.note
+    $('src-seg').querySelectorAll<HTMLButtonElement>('button')
+      .forEach(b => b.classList.toggle('on', b.dataset.k === currentSource))
+  }
+  $('src-seg').innerHTML = Object.entries(SOURCES)
+    .map(([k, v]) => `<button type="button" data-k="${k}">${v.label}</button>`).join('')
+  $('src-seg').querySelectorAll<HTMLButtonElement>('button')
+    .forEach(b => b.addEventListener('click', () => { currentSource = b.dataset.k!; renderSource() }))
+  renderSource()
+
+  $('copy-ps').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(SOURCES[currentSource].script)
+    const b = $('copy-ps'); const t = b.textContent; b.textContent = 'Copied'
+    setTimeout(() => { b.textContent = t }, 1400)
+  })
+
+  let lastRows: string[][] = []
+
+  /**
+   * Presentation deliberately MIRRORS RFF's own Software report (pages/SoftwareReportPage.tsx),
+   * because Brian preferred it to the flat tables this had first - and he was right. A product with
+   * 70 versions (NVIDIA Control Panel, real hospital data) rendered as an expanded table is a wall
+   * of text you have to scroll past; collapsed rows with the counts on the right stay readable at
+   * any size, and you open only the one you care about.
+   *
+   * Same visual grammar as the app: severity pill, "on N devices", version count coloured by how
+   * bad it is, a min-versions filter, and per-row expanders.
+   */
+  let sortMode: 'installs' | 'versions' = 'installs'
+  let minVersions = 2
+  let lastReport: SprawlReport | null = null
+
+  const yearsAgo = (iso: string) => {
+    const d = new Date(iso + 'T00:00:00Z')
+    const yrs = (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000)
+    return yrs < 1 ? 'under a year ago' : `${Math.floor(yrs)} year${Math.floor(yrs) === 1 ? '' : 's'} ago`
+  }
+
+  /**
+   * `isRerender` = the user changed sort or the min-versions filter, so the report is being rebuilt
+   * in place. Scrolling to the top there throws away their scroll position mid-read - they were
+   * probably 40 rows down looking at the very thing they just re-sorted.
+   */
+  function render(rep: SprawlReport, isRerender = false) {
+    if (rep.needsMapping) { showMapper(rep.headers); return }
+    $('map-wrap').classList.add('hidden')
+    lastReport = rep
+
+    const shown = rep.sprawl
+      .filter(s => s.distinctVersions >= minVersions)
+      .sort(sortMode === 'installs'
+        ? (a, b) => b.totalInstalls - a.totalInstalls || b.distinctVersions - a.distinctVersions
+        : (a, b) => b.distinctVersions - a.distinctVersions || b.totalInstalls - a.totalInstalls)
+
+    const src = { intune: 'Intune', configmgr: 'SCCM', generic: 'generic inventory', unknown: 'unrecognised' }[rep.source]
+    const parts: string[] = []
+
+    parts.push(`<section class="panel">
+      <h2 class="rep-h1">Software sprawl &amp; end-of-life</h2>
+      <p class="rep-sub">Built from the export you just dropped - nothing installed, nothing uploaded. Runtimes
+      designed to run side by side (Visual C++ redistributables, .NET runtimes, language packs) are excluded,
+      because many concurrent versions of those is correct rather than sprawl.</p>
+      <p class="rep-meta">${rep.rowsParsed.toLocaleString()} rows read from what looks like an ${esc(src)} export
+      ${rep.distinctDevices ? ` · <strong>${rep.distinctDevices.toLocaleString()}</strong> devices` : ''}
+      · <strong>${rep.suppressed.toLocaleString()}</strong> rows suppressed as side-by-side by design</p>`)
+
+    parts.push(`<h3 class="rep-h2">End of life ${rep.eol.length ? `<span class="cnt-danger">(${rep.eol.length})</span>` : ''}</h3>`)
+    if (!rep.eol.length) {
+      parts.push(`<p class="rep-ok">Nothing in this export is past its vendor end-of-support date.</p>`)
+    } else {
+      parts.push(rep.eol.map((e, i) => `<div class="eol-card">
+        <div class="eol-head">
+          <span class="eol-name">${esc(e.product)}</span>
+          <span class="sev sev-${e.severity}">${e.severity}</span>
+          <span class="rep-meta">on <strong>${e.installs.toLocaleString()}</strong> install${e.installs === 1 ? '' : 's'}</span>
+          <span class="rep-meta dim">unsupported since ${esc(e.endOfSupport)} (${yearsAgo(e.endOfSupport)})</span>
+        </div>
+        <p class="eol-note">${esc(e.note)}</p>
+        <button class="linkish" data-eol="${i}">Show what matched and where</button>
+        <div class="eol-detail hidden" id="eol-d-${i}">
+          <div><strong>Matched:</strong> ${e.rawNames.map(esc).join(' · ')}</div>
+          ${e.sampleDevices.length ? `<div><strong>On:</strong> ${e.sampleDevices.map(esc).join(', ')}</div>` : ''}
+        </div>
+      </div>`).join(''))
+    }
+
+    parts.push(`<div class="rep-row">
+        <h3 class="rep-h2">Version sprawl ${shown.length ? `<span class="cnt-dim">(${shown.length.toLocaleString()})</span>` : ''}</h3>
+        <div class="rep-controls">
+          <label class="rep-filter">Show products with at least
+            <select id="min-ver">${[2, 3, 4, 5, 10].map(n => `<option value="${n}"${n === minVersions ? ' selected' : ''}>${n}</option>`).join('')}</select>
+            versions</label>
+          <div class="seg" id="sort-seg">
+            <button type="button" data-s="installs"${sortMode === 'installs' ? ' class="on"' : ''}>Most installs</button>
+            <button type="button" data-s="versions"${sortMode === 'versions' ? ' class="on"' : ''}>Most versions</button>
+          </div>
+        </div>
+      </div>`)
+
+    if (!shown.length) {
+      parts.push(`<p class="rep-meta">No product is running ${minVersions} or more versions in this export.</p>`)
+    } else {
+      parts.push(shown.map((s, i) => `<div class="sp-row">
+        <button class="sp-head" data-sp="${i}">
+          <span class="sp-name">${esc(s.family)}</span>
+          <span class="sp-vers ${s.distinctVersions >= 4 ? 'bad' : 'warn'}">${s.distinctVersions} versions</span>
+          <span class="sp-dev">${s.totalInstalls.toLocaleString()} install${s.totalInstalls === 1 ? '' : 's'}</span>
+          <span class="sp-caret" id="sp-c-${i}">&#9660;</span>
+        </button>
+        <div class="sp-detail hidden" id="sp-d-${i}">
+          <p class="rep-meta">Raw names collapsed into this product: ${s.rawNames.map(esc).join(' · ')}</p>
+          <table class="vtable"><thead><tr><th>Version</th><th>Installs</th><th>Sample devices</th></tr></thead><tbody>
+          ${s.versions.map(v => `<tr><td class="vcol">${esc(v.version)}</td><td>${v.devices.toLocaleString()}</td>
+            <td class="dim">${v.sampleDevices.map(esc).join(', ')}</td></tr>`).join('')}
+          </tbody></table>
+        </div>
+      </div>`).join(''))
+    }
+    parts.push(`</section>`)
+
+    $('report').innerHTML = parts.join('')
+
+    // Re-sorting/filtering must never re-parse: on a 224 MB export that costs another 20 seconds
+    // to answer a question the browser already holds the answer to.
+    document.getElementById('sort-seg')?.querySelectorAll<HTMLButtonElement>('button')
+      .forEach(b => b.addEventListener('click', () => {
+        const next = b.dataset.s as 'installs' | 'versions'
+        if (next !== sortMode && lastReport) { sortMode = next; render(lastReport, true) }
+      }))
+    document.getElementById('min-ver')?.addEventListener('change', e => {
+      minVersions = Number((e.target as HTMLSelectElement).value)
+      if (lastReport) render(lastReport, true)
+    })
+    $('report').querySelectorAll<HTMLButtonElement>('[data-sp]').forEach(b =>
+      b.addEventListener('click', () => {
+        const d = document.getElementById('sp-d-' + b.dataset.sp)!
+        const c = document.getElementById('sp-c-' + b.dataset.sp)!
+        const open = d.classList.toggle('hidden')
+        c.innerHTML = open ? '&#9660;' : '&#9650;'
+      }))
+    $('report').querySelectorAll<HTMLButtonElement>('[data-eol]').forEach(b =>
+      b.addEventListener('click', () => {
+        document.getElementById('eol-d-' + b.dataset.eol)!.classList.toggle('hidden')
+      }))
+
+    // Only jump to the report when it is NEW. A re-sort keeps you where you were.
+    if (!isRerender) $('report').scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  function showMapper(headers: string[]) {
+    const opts = (sel: string, allowNone: boolean) => {
+      const el = $(sel) as HTMLSelectElement
+      el.innerHTML = (allowNone ? '<option value="-1">— none —</option>' : '') +
+        headers.map((h, i) => `<option value="${i}">${esc(h)}</option>`).join('')
+    }
+    opts('map-name', false); opts('map-version', true); opts('map-device', true)
+    $('map-wrap').classList.remove('hidden')
+  }
+
+  $('map-go').addEventListener('click', async () => {
+    const btn = $('map-go') as HTMLButtonElement
+    const val = (id: string) => parseInt(($(id) as HTMLSelectElement).value, 10)
+    const map: ColumnMap = {
+      source: 'generic', headers: lastRows[0] ?? [],
+      name: val('map-name'), version: val('map-version'),
+      device: val('map-device'), deviceCount: -1,
+    }
+    // Analysing 3.7M rows blocks the main thread for many seconds. Without this the button looks
+    // dead and the honest reaction is to click it again.
+    const label = btn.textContent
+    btn.disabled = true
+    btn.textContent = `Analysing ${(lastRows.length).toLocaleString()} rows…`
+    status(`Analysing ${(lastRows.length).toLocaleString()} rows…`)
+    await yieldToPaint()
+    try { render(analyze(lastRows, map)) }
+    finally { btn.disabled = false; btn.textContent = label }
+  })
+
+  /**
+   * PROGRESS, because a real export is not small. A 28k-endpoint estate exports well over 200 MB,
+   * and parsing that blocks the main thread for several seconds with no repaint - so the page looks
+   * frozen and the honest reaction is to assume it broke. (Brian, on a 224 MB file: "I just didn't
+   * see it was doing something.")
+   *
+   * Each stage yields to the browser before doing its work, otherwise the status text is queued
+   * behind the very computation it is announcing and never paints at all.
+   */
+  const status = (msg: string) => {
+    const el = $('drop-msg')
+    el.innerHTML = msg
+  }
+  const yieldToPaint = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)))
+  const mb = (n: number) => (n / 1024 / 1024).toFixed(1)
+
+  async function handle(text: string, label = '') {
+    $('read-error').classList.add('hidden')
+    try {
+      status(`Parsing ${label}&hellip;`)
+      await yieldToPaint()
+      const t0 = performance.now()
+      lastRows = parseCsv(text)
+      if (lastRows.length < 2) throw new Error('The file has no data rows.')
+
+      status(`Analysing ${(lastRows.length - 1).toLocaleString()} rows&hellip;`)
+      await yieldToPaint()
+      const rep = analyze(lastRows)
+      const secs = ((performance.now() - t0) / 1000).toFixed(1)
+      status(`Done &mdash; ${(lastRows.length - 1).toLocaleString()} rows in ${secs}s. Drop another file to start over.`)
+      render(rep)
+    } catch (e: any) {
+      status('Drop the file here, or click to choose')
+      $('read-error').textContent = e?.message?.includes('Array buffer allocation')
+        ? 'That file is too large for the browser to hold in memory. Split it, or filter the export to fewer columns.'
+        : `Could not read that file: ${e?.message ?? e}`
+      $('read-error').classList.remove('hidden')
+    }
+  }
+
+  const readFile = (f: File) => {
+    drop.classList.add('drag')
+    setTimeout(() => drop.classList.remove('drag'), 900)
+    status(`Reading ${f.name} (${mb(f.size)} MB)&hellip;`)
+    const r = new FileReader()
+    r.onload = () => { void handle(String(r.result), `${mb(f.size)} MB`) }
+    r.onerror = () => {
+      status('Drop the file here, or click to choose')
+      $('read-error').textContent = 'Could not read that file.'
+      $('read-error').classList.remove('hidden')
+    }
+    r.readAsText(f)
+  }
+
+  ;($('file') as HTMLInputElement).addEventListener('change', e => {
+    const f = (e.target as HTMLInputElement).files?.[0]; if (f) readFile(f)
+  })
+  // The highlight class is `drag`, not `over`: tools.css defines `.drop.drag` and the other tools
+  // use it. Inventing a class name meant the drag highlight silently never rendered - nothing
+  // errors, the rule just matches nothing.
+  const drop = $('drop')
+  ;['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag') }))
+  ;['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag') }))
+  drop.addEventListener('drop', e => {
+    const f = (e as DragEvent).dataTransfer?.files?.[0]; if (f) readFile(f)
+  })
+  ;($('paste') as HTMLTextAreaElement).addEventListener('input', e => {
+    const v = (e.target as HTMLTextAreaElement).value
+    if (v.trim().length > 40) void handle(v, 'pasted text')
+  })
+</script>
+
+<style is:global>
+  /* is:global is REQUIRED, not a shortcut. Astro scopes styles via a data-astro-cid attribute
+     stamped on template elements; the report here is injected with innerHTML at runtime, so scoped
+     rules match nothing and the whole report renders unstyled. */
+  .tool-list { margin: 0 0 18px; padding-left: 20px; line-height: 1.7; color: var(--ink-2); }
+  .finding { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .finding-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--surface-2, #F5F4F0); color: var(--ink-2); }
+  .sev-critical { border-left: 4px solid var(--danger, #DC2626); }
+  .sev-high { border-left: 4px solid var(--warning, #D97706); }
+  .sev-medium { border-left: 4px solid var(--info, #2563EB); }
+  .vtable { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+  .vtable td { padding: 4px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+  .vcol { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+  #map-wrap select { display: block; width: 100%; max-width: 380px; margin-bottom: 10px; padding: 7px 9px;
+    border: 1px solid var(--border); border-radius: 8px; }
+  /* Mirrors RFF's Software report so the tool and the product read as one thing. */
+  .panel .rep-h1 { font-size: 21px; font-weight: 700; margin: 0 0 4px; }
+  .rep-sub { font-size: 13px; color: var(--ink-2); margin: 0 0 12px; line-height: 1.55; }
+  .rep-meta { font-size: 12.5px; color: var(--ink-3, var(--ink-2)); margin: 0 0 16px; }
+  .rep-meta.dim, .dim { color: var(--ink-3, var(--ink-2)); }
+  .rep-ok { font-size: 13px; color: var(--success); margin-bottom: 22px; }
+  .panel .rep-h2 { font-size: 15px; font-weight: 700; margin: 0 0 10px; }
+  .cnt-danger { color: var(--danger, #DC2626); }
+  .cnt-dim { color: var(--ink-3, var(--ink-2)); }
+  /* Heading on its own line, controls beneath it. Cramming all three onto one row made the two
+     sort buttons compete with the filter for the leftover space and come out small and cramped -
+     worse than what it replaced. */
+  .rep-row { margin: 22px 0 10px; }
+  .panel .rep-row .rep-h2 { margin: 0 0 10px; }
+  .rep-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+  .rep-filter { font-size: 12px; color: var(--ink-3, var(--ink-2)); }
+  .rep-filter select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 2px 6px; color: var(--ink); font-size: 12px; margin: 0 4px; }
+  /* Wide segmented pair, each half the width, text free to wrap - Brian preferred this to the
+     compact nowrap version. Equal flex-basis keeps both boxes the same size whether or not the
+     label wraps, so a two-line "Most versions" cannot make its sibling look lopsided. */
+  .panel .rep-row .seg { width: 100%; gap: 10px; }
+  .panel .rep-row .seg button { flex: 1 1 0; min-height: 44px; white-space: normal; line-height: 1.25; }
+  .panel .rep-filter { white-space: nowrap; }
+
+  .eol-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .eol-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .eol-name { font-size: 14px; font-weight: 700; }
+  .eol-note { font-size: 12.5px; color: var(--ink-2); margin: 7px 0 0; line-height: 1.55; }
+  .eol-detail { margin-top: 6px; font-size: 12px; color: var(--ink-3, var(--ink-2)); line-height: 1.7; }
+  .sev { font-size: 10.5px; font-weight: 700; text-transform: uppercase; border: 1px solid;
+    border-radius: 5px; padding: 1px 6px; }
+  .sev-critical { color: var(--danger, #DC2626); border-color: var(--danger, #DC2626); }
+  .sev-high { color: var(--warning, #b45309); border-color: var(--warning, #b45309); }
+  .sev-medium { color: var(--ink-3, var(--ink-2)); border-color: var(--border); }
+
+  .sp-row { border-bottom: 1px solid var(--border); }
+  .sp-head { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: none;
+    padding: 11px 2px; cursor: pointer; text-align: left; font: inherit; }
+  .sp-head:hover { background: var(--surface-2, #FAFAF8); }
+  .sp-name { font-size: 13.5px; font-weight: 600; color: var(--ink); flex: 1; }
+  .sp-vers { font-size: 12.5px; font-weight: 700; }
+  .sp-vers.bad { color: var(--danger, #DC2626); }
+  .sp-vers.warn { color: var(--warning, #b45309); }
+  .sp-dev { font-size: 12.5px; color: var(--ink-3, var(--ink-2)); }
+  .sp-caret { color: var(--brand); font-size: 11px; }
+  .sp-detail { padding: 0 2px 14px; }
+  .linkish { background: none; border: none; color: var(--brand); cursor: pointer; font-size: 12px;
+    font-weight: 600; padding: 6px 0 0; }
+  .vtable thead th { text-align: left; color: var(--ink-3, var(--ink-2)); font-size: 11px; font-weight: 600;
+    padding: 4px 8px 4px 0; }
+  .hidden { display: none; }
+</style>

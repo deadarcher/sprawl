@@ -1,0 +1,25 @@
+{
+  "name": "sprawl",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "How many versions of everything are you running? Drop an SCCM, Intune or RMM software inventory export and see version sprawl plus end-of-life software. 100% client-side - nothing is uploaded.",
+  "license": "MIT",
+  "homepage": "https://getrff.com/sprawl",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deadarcher/sprawl.git"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "check:parity": "node scripts/check-lib-parity.mjs"
+  },
+  "dependencies": {
+    "astro": "^5.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
