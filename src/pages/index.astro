@@ -112,7 +112,7 @@ const jsonLd = [
         <a href="https://github.com/deadarcher/sprawl" target="_blank" rel="noopener">github.com/deadarcher/sprawl</a>.
         Read the analysis, disagree with a rule, or add an end-of-life fact.
         <a href="https://github.com/deadarcher/sprawl/issues" target="_blank" rel="noopener">Open an issue</a>
-        if a vendor's naming defeats the family matcher — that is the part that always needs real-world data.
+        if a vendor's naming defeats the family matcher. That is the part that always needs real-world data.
       </p>
     </section>
 
@@ -375,7 +375,7 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
   function showMapper(headers: string[]) {
     const opts = (sel: string, allowNone: boolean) => {
       const el = $(sel) as HTMLSelectElement
-      el.innerHTML = (allowNone ? '<option value="-1">— none —</option>' : '') +
+      el.innerHTML = (allowNone ? '<option value="-1">(none)</option>' : '') +
         headers.map((h, i) => `<option value="${i}">${esc(h)}</option>`).join('')
     }
     opts('map-name', false); opts('map-version', true); opts('map-device', true)
